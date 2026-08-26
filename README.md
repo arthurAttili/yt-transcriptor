@@ -6,6 +6,8 @@ Extensão de Chrome que copia a transcrição de qualquer vídeo do YouTube com 
 
 Ao clicar no botão da extensão, um script é injetado na página do vídeo, lê as faixas de legenda direto do player (preferindo legenda manual à automática), baixa a faixa em JSON e copia o texto com timestamps para a área de transferência. Nada sai do navegador — sem servidor, sem conta, sem rastreamento.
 
+O YouTube passou a exigir um token de origem (`pot`) no endpoint de legendas — sem ele, a resposta vem com corpo vazio. Quando isso acontece, a extensão reaproveita a URL assinada que o próprio player já gerou nesta sessão, ou força o player a gerá-la ligando e desligando as legendas por um instante (o estado do usuário é restaurado em seguida).
+
 Formato copiado:
 
 ```

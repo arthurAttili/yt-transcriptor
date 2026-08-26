@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YT Transcriptor",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Copia a transcrição de qualquer vídeo do YouTube com um único clique.",
   "permissions": ["scripting", "activeTab"],
   "background": {

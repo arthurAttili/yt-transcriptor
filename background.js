@@ -26,9 +26,10 @@ chrome.action.onClicked.addListener(async (tab) => {
 
 // Executada dentro da página do YouTube.
 async function copyTranscript(isWatch) {
-  const toast = (msg, ok) => {
+  const toast = (msg, kind) => {
     const old = document.getElementById("yt-transcriptor-toast");
     if (old) old.remove();
+    const colors = { ok: "#1e8e3e", err: "#c0392b", info: "#333" };
     const el = document.createElement("div");
     el.id = "yt-transcriptor-toast";
     el.textContent = msg;
@@ -43,47 +44,112 @@ async function copyTranscript(isWatch) {
       "font:500 14px/1.4 Roboto,Arial,sans-serif",
       "color:#fff",
       "box-shadow:0 4px 16px rgba(0,0,0,.35)",
-      "background:" + (ok ? "#1e8e3e" : "#c0392b"),
+      "background:" + (colors[kind] || colors.info),
       "transition:opacity .3s",
     ].join(";");
     document.documentElement.appendChild(el);
-    setTimeout(() => {
-      el.style.opacity = "0";
-      setTimeout(() => el.remove(), 350);
-    }, 2600);
+    if (kind !== "info") {
+      setTimeout(() => {
+        el.style.opacity = "0";
+        setTimeout(() => el.remove(), 350);
+      }, 2600);
+    }
   };
+
+  const fetchJson3 = async (rawUrl) => {
+    const u = new URL(rawUrl, location.origin);
+    u.searchParams.set("fmt", "json3");
+    const res = await fetch(u.toString(), { credentials: "same-origin" });
+    if (!res.ok) return null;
+    const body = await res.text();
+    // O endpoint timedtext responde 200 com corpo vazio quando falta o token
+    // de origem (pot) — tratar como falha, não como "sem transcrição".
+    if (!body) return null;
+    try {
+      return JSON.parse(body);
+    } catch (e) {
+      return null;
+    }
+  };
+
+  // Espera o próprio player requisitar /api/timedtext (a URL dele vem com o
+  // token pot). buffered=true reaproveita uma requisição já feita na sessão.
+  const captureTimedtextUrl = (videoId, buffered, timeoutMs) =>
+    new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => {
+        if (done) return;
+        done = true;
+        obs.disconnect();
+        resolve(v);
+      };
+      const obs = new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) {
+          if (
+            e.name.includes("/api/timedtext") &&
+            e.name.includes("pot=") &&
+            e.name.includes(videoId)
+          ) {
+            finish(e.name);
+            return;
+          }
+        }
+      });
+      obs.observe({ type: "resource", buffered });
+      setTimeout(() => finish(null), timeoutMs);
+    });
 
   try {
     if (!isWatch) {
-      toast("Abra um vídeo do YouTube para copiar a transcrição.", false);
+      toast("Abra um vídeo do YouTube para copiar a transcrição.", "err");
       return;
     }
 
     // Player response atual (sobrevive à navegação SPA); fallback para o inicial.
+    const player = document.getElementById("movie_player");
     let pr = null;
     try {
-      pr = document.getElementById("movie_player")?.getPlayerResponse?.();
+      pr = player?.getPlayerResponse?.();
     } catch (e) {}
     if (!pr?.captions) pr = window.ytInitialPlayerResponse;
 
+    const videoId = pr?.videoDetails?.videoId || "";
     const tracks = pr?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
     if (!tracks || !tracks.length) {
-      toast("Este vídeo não tem transcrição disponível.", false);
+      toast("Este vídeo não tem transcrição disponível.", "err");
       return;
     }
 
-    // Prefere legenda manual; senão, a automática (asr).
-    const track = tracks.find((t) => t.kind !== "asr") || tracks[0];
-    const url = new URL(track.baseUrl, location.origin);
-    url.searchParams.set("fmt", "json3");
+    toast("Obtendo transcrição…", "info");
 
-    const res = await fetch(url.toString(), { credentials: "same-origin" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
+    // 1) Tentativa direta: baseUrl da faixa (prefere legenda manual à asr).
+    const track = tracks.find((t) => t.kind !== "asr") || tracks[0];
+    let data = await fetchJson3(track.baseUrl);
+
+    // 2) O player já buscou a legenda nesta sessão? Reusa a URL com pot.
+    if (!data) {
+      const cached = await captureTimedtextUrl(videoId, true, 400);
+      if (cached) data = await fetchJson3(cached);
+    }
+
+    // 3) Força o player a buscar a legenda (liga/desliga CC, estado do
+    //    usuário volta ao que era) e captura a URL com pot dessa requisição.
+    if (!data && player?.toggleSubtitles) {
+      const urlPromise = captureTimedtextUrl(videoId, false, 6000);
+      player.toggleSubtitles();
+      setTimeout(() => player.toggleSubtitles(), 300);
+      const fresh = await urlPromise;
+      if (fresh) data = await fetchJson3(fresh);
+    }
+
+    if (!data) {
+      toast("Erro ao obter a transcrição deste vídeo.", "err");
+      return;
+    }
 
     const lines = [];
     for (const ev of data.events || []) {
-      if (!ev.segs) continue;
+      if (!ev.segs || ev.aAppend) continue;
       const text = ev.segs
         .map((s) => s.utf8 || "")
         .join("")
@@ -102,7 +168,7 @@ async function copyTranscript(isWatch) {
     }
 
     if (!lines.length) {
-      toast("Este vídeo não tem transcrição disponível.", false);
+      toast("Este vídeo não tem transcrição disponível.", "err");
       return;
     }
 
@@ -129,9 +195,9 @@ async function copyTranscript(isWatch) {
       copied
         ? "Transcrição copiada!"
         : "Não consegui acessar a área de transferência.",
-      copied
+      copied ? "ok" : "err"
     );
   } catch (e) {
-    toast("Erro ao obter a transcrição deste vídeo.", false);
+    toast("Erro ao obter a transcrição deste vídeo.", "err");
   }
 }
