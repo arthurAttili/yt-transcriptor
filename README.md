@@ -1,6 +1,6 @@
 # YT Transcriptor
 
-Extensão de Chrome que copia a transcrição de qualquer vídeo do YouTube com um único clique no ícone. Se o vídeo não tiver transcrição, um aviso aparece na tela.
+Extensão de Chrome que copia a transcrição de qualquer vídeo do YouTube com um único clique no ícone. Se o vídeo não tiver transcrição, um aviso aparece na tela. Também gera um resumo crítico do vídeo com um clique, via Gemini.
 
 ## Como funciona
 
@@ -17,6 +17,19 @@ Título do vídeo
 0:26 Segunda fala...
 ```
 
+## Resumo com Gemini
+
+Nas páginas de vídeo aparece um botão flutuante **✨ Resumo** (canto inferior direito). Um clique coleta a transcrição, envia ao modelo `gemini-3.1-pro-preview` e abre um painel lateral com:
+
+- **Resumo** — síntese fiel do conteúdo
+- **Pontos principais** — bullets com timestamps
+- **Análise crítica** — prós e contras do conteúdo, para desenvolvimento de senso crítico
+- **Perguntas para reflexão**
+
+O título do resumo é sempre o nome do vídeo. O painel tem botão para copiar o resumo em Markdown.
+
+**Cadastro da chave:** clique com o botão direito no ícone da extensão → **Opções** (ou use o botão "Cadastrar chave" que o painel mostra quando falta a chave). A chave é criada grátis em [aistudio.google.com/apikey](https://aistudio.google.com/apikey), é validada no salvamento e fica guardada só no navegador (`chrome.storage.local`), usada exclusivamente em chamadas diretas à API do Google.
+
 ## Instalação
 
 1. Baixe/clone este repositório
@@ -27,6 +40,8 @@ Título do vídeo
 
 ## Estrutura
 
-- `manifest.json` — Manifest V3, permissões mínimas (`activeTab` + `scripting`)
-- `background.js` — service worker: recebe o clique e injeta o coletor na página
+- `manifest.json` — Manifest V3 (`activeTab`, `scripting`, `storage` + hosts do YouTube e da API do Gemini)
+- `background.js` — service worker: injeta o coletor de transcrição (copiar e resumir) e chama a API do Gemini
+- `content.js` — botão flutuante "Resumo" e painel lateral nas páginas de vídeo
+- `options.html` / `options.js` — cadastro e validação da chave da API do Gemini
 - `icons/` — ícones da extensão

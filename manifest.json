@@ -1,11 +1,26 @@
 {
   "manifest_version": 3,
   "name": "YT Transcriptor",
-  "version": "1.1.0",
-  "description": "Copia a transcrição de qualquer vídeo do YouTube com um único clique.",
-  "permissions": ["scripting", "activeTab"],
+  "version": "1.2.0",
+  "description": "Copia a transcrição e gera resumo crítico de qualquer vídeo do YouTube com um único clique.",
+  "permissions": ["scripting", "activeTab", "storage"],
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "https://generativelanguage.googleapis.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
   },
   "action": {
     "default_title": "Copiar transcrição do vídeo",

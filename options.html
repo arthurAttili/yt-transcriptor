@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>YT Transcriptor — Configurações</title>
+  <style>
+    body {
+      margin: 0; padding: 40px 24px; background: #181818; color: #eee;
+      font: 400 15px/1.6 Roboto, Arial, sans-serif;
+      display: flex; justify-content: center;
+    }
+    .card { width: min(560px, 100%); }
+    h1 { font-size: 20px; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
+    h1 img { width: 28px; height: 28px; }
+    .sub { color: #999; margin: 0 0 28px; font-size: 13px; }
+    label { display: block; font-weight: 500; margin-bottom: 8px; }
+    .row { display: flex; gap: 8px; }
+    input {
+      flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #3a3a3a;
+      background: #222; color: #eee; font-size: 14px; font-family: monospace;
+    }
+    input:focus { outline: none; border-color: #E22117; }
+    button {
+      border: none; border-radius: 8px; padding: 10px 18px; cursor: pointer;
+      font-size: 14px; font-weight: 500;
+    }
+    #save { background: #E22117; color: #fff; }
+    #toggle { background: #333; color: #ccc; }
+    #status { margin-top: 14px; font-size: 13px; min-height: 20px; }
+    #status.ok { color: #6fcf7c; }
+    #status.err { color: #ff8a80; }
+    .hint { margin-top: 28px; color: #888; font-size: 13px; border-top: 1px solid #2a2a2a; padding-top: 16px; }
+    .hint a { color: #ff8a80; }
+    code { background: #2a2a2a; padding: 1px 6px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1><img src="icons/icon48.png" alt=""> YT Transcriptor</h1>
+    <p class="sub">Configuração do resumo com Gemini (modelo <code>gemini-3.1-pro-preview</code>)</p>
+
+    <label for="key">Chave da API do Gemini</label>
+    <div class="row">
+      <input type="password" id="key" placeholder="AIza..." autocomplete="off" spellcheck="false">
+      <button id="toggle" type="button">👁</button>
+      <button id="save" type="button">Salvar</button>
+    </div>
+    <div id="status"></div>
+
+    <p class="hint">
+      A chave é gratuita e você cria em
+      <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>.
+      Ela fica salva somente neste navegador (<code>chrome.storage.local</code>) e é usada
+      exclusivamente nas chamadas diretas à API do Google.
+    </p>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>
