@@ -19,7 +19,7 @@ Título do vídeo
 
 ## Resumo com Gemini
 
-Nas páginas de vídeo aparece um botão flutuante **✨ Resumo** (canto inferior direito). Um clique coleta a transcrição, envia ao modelo `gemini-3.1-pro-preview` e abre um painel lateral com:
+Nas páginas de vídeo aparece um botão flutuante **✨ Resumo** (canto inferior direito). Um clique coleta a transcrição, envia ao modelo `gemini-3.7-flash` e abre um painel lateral com:
 
 - **Resumo** — síntese fiel do conteúdo
 - **Pontos principais** — bullets com timestamps

@@ -4,7 +4,7 @@
 // O coletor roda no MAIN world para ter acesso ao player do YouTube
 // (movie_player / ytInitialPlayerResponse), invisível em worlds isolados.
 
-const GEMINI_MODEL = "gemini-3.1-pro-preview";
+const GEMINI_MODEL = "gemini-3.7-flash";
 const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/" +
   GEMINI_MODEL +
