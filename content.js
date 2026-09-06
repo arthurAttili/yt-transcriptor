@@ -76,7 +76,9 @@
         font: 500 14px/1 Roboto, Arial, sans-serif;
         box-shadow: 0 4px 14px rgba(0,0,0,.4);
         transition: transform .15s, box-shadow .15s;
+        animation: ytt-fadein 1.6s ease both;
       }
+      @keyframes ytt-fadein { from { opacity: 0; } to { opacity: 1; } }
       #${FAB_ID}:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.5); }
       #${FAB_ID}:disabled { opacity: .6; cursor: wait; transform: none; }
       #${PANEL_ID} {
@@ -262,11 +264,25 @@
   }
   document.addEventListener("fullscreenchange", syncFullscreen);
 
-  // Navegação SPA do YouTube
+  // O botão só entra depois que a página terminou de carregar.
+  const whenLoaded = () =>
+    new Promise((resolve) => {
+      if (document.readyState === "complete") resolve();
+      else window.addEventListener("load", resolve, { once: true });
+    });
+
+  let pageLoaded = false;
+
+  // Navegação SPA do YouTube. No primeiro carregamento esse evento dispara
+  // antes do "load" — nesse caso quem cria o botão é o whenLoaded abaixo.
   window.addEventListener("yt-navigate-finish", () => {
+    if (!pageLoaded) return;
     syncFab();
     syncFullscreen();
   });
-  syncFab();
-  syncFullscreen();
+  whenLoaded().then(() => {
+    pageLoaded = true;
+    syncFab();
+    syncFullscreen();
+  });
 })();
