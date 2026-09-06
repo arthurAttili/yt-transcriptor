@@ -19,7 +19,7 @@ Título do vídeo
 
 ## Resumo com Gemini
 
-Nas páginas de vídeo aparece um botão flutuante **✨ Resumo** (canto inferior direito). Um clique coleta a transcrição, envia ao modelo `gemini-3.7-flash` e abre um painel lateral com:
+O botão **✨ Resumo** entra na interface nativa do YouTube em dois lugares: na barra de ações do vídeo (junto de like/compartilhar) e nos controles do player (junto de legendas/engrenagem — disponível também em tela cheia). Um clique coleta a transcrição, envia ao modelo `gemini-3.7-flash` e abre um painel lateral com:
 
 - **Resumo** — síntese fiel do conteúdo
 - **Pontos principais** — bullets com timestamps
@@ -42,6 +42,6 @@ O título do resumo é sempre o nome do vídeo. O painel tem botão para copiar 
 
 - `manifest.json` — Manifest V3 (`activeTab`, `scripting`, `storage` + hosts do YouTube e da API do Gemini)
 - `background.js` — service worker: injeta o coletor de transcrição (copiar e resumir) e chama a API do Gemini
-- `content.js` — botão flutuante "Resumo" e painel lateral nas páginas de vídeo
+- `content.js` — botões "Resumo" integrados à interface do YouTube e painel lateral
 - `options.html` / `options.js` — cadastro e validação da chave da API do Gemini
 - `icons/` — ícones da extensão

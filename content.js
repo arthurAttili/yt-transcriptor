@@ -1,14 +1,42 @@
-// Botão flutuante "Resumo" nas páginas de vídeo + painel lateral com o
-// resultado do Gemini. Roda no world isolado (tem acesso a chrome.runtime).
+// Botões "Resumo" integrados à interface nativa do YouTube: um na barra de
+// ações do vídeo (junto de like/compartilhar) e um nos controles do player
+// (junto de legendas/engrenagem — visível também em tela cheia). O resultado
+// do Gemini abre num painel lateral. Roda no world isolado (chrome.runtime).
 
 (() => {
-  const FAB_ID = "ytt-fab";
+  const ACTION_BTN_ID = "ytt-action-btn";
+  const PLAYER_BTN_ID = "ytt-player-btn";
   const PANEL_ID = "ytt-panel";
   let busy = false;
 
   const isWatchPage = () =>
     /^\/(watch|shorts\/|live\/)/.test(location.pathname) ||
     location.pathname === "/watch";
+
+  // O YouTube ativa Trusted Types: innerHTML cru lança exceção. Todo HTML
+  // passa por uma policy própria; se a criação dela falhar, DOMParser cobre.
+  let ttPolicy = null;
+  try {
+    ttPolicy = window.trustedTypes
+      ? trustedTypes.createPolicy("ytt-html", { createHTML: (s) => s })
+      : null;
+  } catch (e) {}
+
+  function setHtml(el, html) {
+    if (ttPolicy) {
+      el.innerHTML = ttPolicy.createHTML(html);
+      return;
+    }
+    try {
+      el.innerHTML = html;
+    } catch (e) {
+      el.textContent = "";
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      for (const n of [...doc.body.childNodes]) {
+        el.appendChild(el.ownerDocument.importNode(n, true));
+      }
+    }
+  }
 
   // ---------- markdown mínimo (títulos, negrito, itálico, listas) ----------
   const escapeHtml = (s) =>
@@ -68,19 +96,24 @@
     const st = document.createElement("style");
     st.id = "ytt-styles";
     st.textContent = `
-      #${FAB_ID} {
-        position: fixed; right: 20px; bottom: 20px; z-index: 2147483645;
-        display: flex; align-items: center; gap: 8px;
-        padding: 10px 16px; border: none; border-radius: 24px;
-        background: #E22117; color: #fff; cursor: pointer;
-        font: 500 14px/1 Roboto, Arial, sans-serif;
-        box-shadow: 0 4px 14px rgba(0,0,0,.4);
-        transition: transform .15s, box-shadow .15s;
+      @keyframes ytt-fadein { from { opacity: 0; } to { opacity: 1; } }
+      #${ACTION_BTN_ID} {
+        display: inline-flex; align-items: center; gap: 6px; height: 36px;
+        padding: 0 16px; margin-left: 8px; border: none; border-radius: 18px;
+        background: var(--yt-spec-badge-chip-background, rgba(255,255,255,.1));
+        color: var(--yt-spec-text-primary, #f1f1f1);
+        font: 500 14px/36px "Roboto", Arial, sans-serif; cursor: pointer;
+        white-space: nowrap; flex: none;
         animation: ytt-fadein 1.6s ease both;
       }
-      @keyframes ytt-fadein { from { opacity: 0; } to { opacity: 1; } }
-      #${FAB_ID}:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.5); }
-      #${FAB_ID}:disabled { opacity: .6; cursor: wait; transform: none; }
+      #${ACTION_BTN_ID}:hover {
+        background: var(--yt-spec-button-chip-background-hover, rgba(255,255,255,.2));
+      }
+      #${ACTION_BTN_ID}:disabled, #${PLAYER_BTN_ID}:disabled {
+        opacity: .6; cursor: wait;
+      }
+      #${PLAYER_BTN_ID} { animation: ytt-fadein 1.6s ease both; }
+      #${PLAYER_BTN_ID} svg { width: 100%; height: 100%; }
       #${PANEL_ID} {
         position: fixed; top: 0; right: 0; bottom: 0; z-index: 2147483646;
         width: min(440px, 92vw); display: flex; flex-direction: column;
@@ -133,7 +166,7 @@
     injectStyles();
     const panel = document.createElement("div");
     panel.id = PANEL_ID;
-    panel.innerHTML = `
+    setHtml(panel, `
       <div class="ytt-head">
         <span class="ytt-title">Resumo do vídeo</span>
         <button class="ytt-copy" style="display:none">Copiar</button>
@@ -145,9 +178,11 @@
           <div>Gerando resumo com Gemini…<br>Vídeos longos podem levar um minuto.</div>
         </div>
       </div>
-    `;
+    `);
     panel.querySelector(".ytt-close").addEventListener("click", closePanel);
-    document.documentElement.appendChild(panel);
+    // Em tela cheia o painel precisa ser filho do elemento em fullscreen
+    // para ser exibido; fora dela, do documentElement.
+    (document.fullscreenElement || document.documentElement).appendChild(panel);
     return panel;
   }
 
@@ -156,13 +191,15 @@
   }
 
   function showStatus(panel, html) {
-    panel.querySelector(".ytt-body").innerHTML =
-      `<div class="ytt-status">${html}</div>`;
+    setHtml(
+      panel.querySelector(".ytt-body"),
+      `<div class="ytt-status">${html}</div>`
+    );
   }
 
   function showSummary(panel, title, markdown) {
     panel.querySelector(".ytt-title").textContent = title;
-    panel.querySelector(".ytt-body").innerHTML = renderMarkdown(markdown);
+    setHtml(panel.querySelector(".ytt-body"), renderMarkdown(markdown));
     const btn = panel.querySelector(".ytt-copy");
     btn.style.display = "";
     btn.addEventListener("click", async () => {
@@ -181,11 +218,17 @@
     "fetch-failed": "Erro ao obter a transcrição deste vídeo.",
   };
 
+  function setButtonsDisabled(disabled) {
+    for (const id of [ACTION_BTN_ID, PLAYER_BTN_ID]) {
+      const b = document.getElementById(id);
+      if (b) b.disabled = disabled;
+    }
+  }
+
   async function summarize() {
     if (busy) return;
     busy = true;
-    const fab = document.getElementById(FAB_ID);
-    if (fab) fab.disabled = true;
+    setButtonsDisabled(true);
     const panel = openPanel();
     try {
       const resp = await chrome.runtime.sendMessage({ type: "summarize" });
@@ -230,41 +273,93 @@
       }
     } finally {
       busy = false;
-      const f = document.getElementById(FAB_ID);
-      if (f) f.disabled = false;
+      setButtonsDisabled(false);
     }
   }
 
-  // ---------- botão flutuante ----------
-  function syncFab() {
-    const existing = document.getElementById(FAB_ID);
+  // ---------- botões nativos ----------
+  function buildSparkleSvg() {
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", "0 0 36 36");
+    svg.setAttribute("aria-hidden", "true");
+    const paths = [
+      "M18 9l2.4 6.6L27 18l-6.6 2.4L18 27l-2.4-6.6L9 18l6.6-2.4z",
+      "M26.5 8.5l1 2.7 2.7 1-2.7 1-1 2.7-1-2.7-2.7-1 2.7-1z",
+    ];
+    for (const d of paths) {
+      const p = document.createElementNS(NS, "path");
+      p.setAttribute("fill", "#fff");
+      p.setAttribute("d", d);
+      svg.appendChild(p);
+    }
+    return svg;
+  }
+
+  // Barra de ações do vídeo (junto de like/compartilhar).
+  function injectActionButton() {
+    if (document.getElementById(ACTION_BTN_ID)) return true;
+    const container =
+      document.querySelector(
+        "ytd-watch-metadata #actions-inner #menu #top-level-buttons-computed"
+      ) ||
+      document.querySelector(
+        "ytd-watch-metadata #actions #top-level-buttons-computed"
+      ) ||
+      document.querySelector("ytd-menu-renderer #top-level-buttons-computed");
+    if (!container) return false;
+    injectStyles();
+    const btn = document.createElement("button");
+    btn.id = ACTION_BTN_ID;
+    btn.type = "button";
+    btn.title = "Resumir vídeo com Gemini";
+    btn.textContent = "✨ Resumo";
+    btn.addEventListener("click", summarize);
+    container.appendChild(btn);
+    return true;
+  }
+
+  // Controles do player (junto de legendas/engrenagem) — vale em tela cheia.
+  function injectPlayerButton() {
+    if (document.getElementById(PLAYER_BTN_ID)) return true;
+    const controls =
+      document.querySelector("#movie_player .ytp-right-controls-left") ||
+      document.querySelector("#movie_player .ytp-right-controls");
+    if (!controls) return false;
+    injectStyles();
+    const btn = document.createElement("button");
+    btn.id = PLAYER_BTN_ID;
+    btn.className = "ytp-button";
+    btn.type = "button";
+    btn.title = "Resumir vídeo com Gemini";
+    btn.appendChild(buildSparkleSvg());
+    btn.addEventListener("click", summarize);
+    controls.insertBefore(btn, controls.firstChild);
+    return true;
+  }
+
+  // O YouTube renderiza a barra de ações de forma assíncrona; tenta injetar
+  // por até 15s. getElementById não encontra nós removidos numa re-renderização
+  // da página, então a checagem também cobre reinjeção.
+  let retryTimer = null;
+  function syncButtons() {
+    clearInterval(retryTimer);
     if (!isWatchPage()) {
-      existing?.remove();
+      document.getElementById(ACTION_BTN_ID)?.remove();
+      document.getElementById(PLAYER_BTN_ID)?.remove();
       closePanel();
       return;
     }
-    if (existing) return;
-    injectStyles();
-    const fab = document.createElement("button");
-    fab.id = FAB_ID;
-    fab.type = "button";
-    fab.title = "Resumir vídeo com Gemini";
-    fab.innerHTML = "✨ Resumo";
-    fab.addEventListener("click", summarize);
-    document.documentElement.appendChild(fab);
+    let tries = 0;
+    const attempt = () => {
+      const done = injectActionButton() & injectPlayerButton();
+      if (done || ++tries > 30) clearInterval(retryTimer);
+    };
+    attempt();
+    retryTimer = setInterval(attempt, 500);
   }
 
-  // Em tela cheia o botão e o painel somem; voltam ao sair.
-  function syncFullscreen() {
-    const hidden = !!document.fullscreenElement;
-    const fab = document.getElementById(FAB_ID);
-    if (fab) fab.style.display = hidden ? "none" : "";
-    const panel = document.getElementById(PANEL_ID);
-    if (panel) panel.style.display = hidden ? "none" : "";
-  }
-  document.addEventListener("fullscreenchange", syncFullscreen);
-
-  // O botão só entra depois que a página terminou de carregar.
+  // Os botões só entram depois que a página terminou de carregar.
   const whenLoaded = () =>
     new Promise((resolve) => {
       if (document.readyState === "complete") resolve();
@@ -274,15 +369,13 @@
   let pageLoaded = false;
 
   // Navegação SPA do YouTube. No primeiro carregamento esse evento dispara
-  // antes do "load" — nesse caso quem cria o botão é o whenLoaded abaixo.
+  // antes do "load" — nesse caso quem injeta os botões é o whenLoaded abaixo.
   window.addEventListener("yt-navigate-finish", () => {
     if (!pageLoaded) return;
-    syncFab();
-    syncFullscreen();
+    syncButtons();
   });
   whenLoaded().then(() => {
     pageLoaded = true;
-    syncFab();
-    syncFullscreen();
+    syncButtons();
   });
 })();
