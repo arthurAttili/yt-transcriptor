@@ -252,7 +252,21 @@
     document.documentElement.appendChild(fab);
   }
 
+  // Em tela cheia o botão e o painel somem; voltam ao sair.
+  function syncFullscreen() {
+    const hidden = !!document.fullscreenElement;
+    const fab = document.getElementById(FAB_ID);
+    if (fab) fab.style.display = hidden ? "none" : "";
+    const panel = document.getElementById(PANEL_ID);
+    if (panel) panel.style.display = hidden ? "none" : "";
+  }
+  document.addEventListener("fullscreenchange", syncFullscreen);
+
   // Navegação SPA do YouTube
-  window.addEventListener("yt-navigate-finish", syncFab);
+  window.addEventListener("yt-navigate-finish", () => {
+    syncFab();
+    syncFullscreen();
+  });
   syncFab();
+  syncFullscreen();
 })();
