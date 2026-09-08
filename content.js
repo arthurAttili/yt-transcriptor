@@ -1,4 +1,4 @@
-// Botões "Resumo" integrados à interface nativa do YouTube: um na barra de
+// Botões ".txt" integrados à interface nativa do YouTube: um na barra de
 // ações do vídeo (junto de like/compartilhar) e um nos controles do player
 // (junto de legendas/engrenagem — visível também em tela cheia). O resultado
 // do Gemini abre num painel lateral. Roda no world isolado (chrome.runtime).
@@ -112,8 +112,11 @@
       #${ACTION_BTN_ID}:disabled, #${PLAYER_BTN_ID}:disabled {
         opacity: .6; cursor: wait;
       }
-      #${PLAYER_BTN_ID} { animation: ytt-fadein 1.6s ease both; }
-      #${PLAYER_BTN_ID} svg { width: 100%; height: 100%; }
+      #${PLAYER_BTN_ID} {
+        animation: ytt-fadein 1.6s ease both;
+        width: auto; min-width: 36px; padding: 0 8px; vertical-align: top;
+        color: #fff; font: 500 13px/1 "Roboto", Arial, sans-serif;
+      }
       #${PANEL_ID} {
         position: fixed; top: 0; right: 0; bottom: 0; z-index: 2147483646;
         width: min(440px, 92vw); display: flex; flex-direction: column;
@@ -216,6 +219,13 @@
       "Este vídeo não tem transcrição disponível — sem ela não há como resumir.",
     "not-watch": "Abra um vídeo do YouTube para gerar o resumo.",
     "fetch-failed": "Erro ao obter a transcrição deste vídeo.",
+    "bad-url": "A URL informada não é de um vídeo do YouTube.",
+    "other-no-transcript":
+      "O segundo vídeo não tem transcrição disponível — sem ela não há como comparar.",
+    "other-fetch-failed": "Erro ao obter a transcrição do segundo vídeo.",
+    "other-not-watch": "A URL informada não abriu um vídeo do YouTube.",
+    "other-error": "Erro ao abrir o segundo vídeo.",
+    "other-transcript": "Não consegui ler a transcrição do segundo vídeo.",
   };
 
   function setButtonsDisabled(disabled) {
@@ -225,13 +235,22 @@
     }
   }
 
-  async function summarize() {
+  const summarize = () => run({ type: "summarize" });
+
+  async function run(request) {
     if (busy) return;
     busy = true;
     setButtonsDisabled(true);
     const panel = openPanel();
+    if (request.type === "compare") {
+      showStatus(
+        panel,
+        `<div class="ytt-spinner"></div>
+         <div>Abrindo o segundo vídeo e analisando os dois…<br>Costuma levar mais de um minuto.</div>`
+      );
+    }
     try {
-      const resp = await chrome.runtime.sendMessage({ type: "summarize" });
+      const resp = await chrome.runtime.sendMessage(request);
       if (!document.getElementById(PANEL_ID)) return; // usuário fechou
       if (resp?.summary) {
         showSummary(panel, resp.title || "Resumo do vídeo", resp.summary);
@@ -278,23 +297,6 @@
   }
 
   // ---------- botões nativos ----------
-  function buildSparkleSvg() {
-    const NS = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(NS, "svg");
-    svg.setAttribute("viewBox", "0 0 36 36");
-    svg.setAttribute("aria-hidden", "true");
-    const paths = [
-      "M18 9l2.4 6.6L27 18l-6.6 2.4L18 27l-2.4-6.6L9 18l6.6-2.4z",
-      "M26.5 8.5l1 2.7 2.7 1-2.7 1-1 2.7-1-2.7-2.7-1 2.7-1z",
-    ];
-    for (const d of paths) {
-      const p = document.createElementNS(NS, "path");
-      p.setAttribute("fill", "#fff");
-      p.setAttribute("d", d);
-      svg.appendChild(p);
-    }
-    return svg;
-  }
 
   // Barra de ações do vídeo (junto de like/compartilhar).
   function injectActionButton() {
@@ -313,7 +315,7 @@
     btn.id = ACTION_BTN_ID;
     btn.type = "button";
     btn.title = "Resumir vídeo com Gemini";
-    btn.textContent = "✨ Resumo";
+    btn.textContent = ".txt";
     btn.addEventListener("click", summarize);
     container.appendChild(btn);
     return true;
@@ -332,7 +334,7 @@
     btn.className = "ytp-button";
     btn.type = "button";
     btn.title = "Resumir vídeo com Gemini";
-    btn.appendChild(buildSparkleSvg());
+    btn.textContent = ".txt";
     btn.addEventListener("click", summarize);
     controls.insertBefore(btn, controls.firstChild);
     return true;
@@ -377,5 +379,12 @@
   whenLoaded().then(() => {
     pageLoaded = true;
     syncButtons();
+  });
+
+  // Ordens vindas do popup do ícone.
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === "open-summary") run({ type: "summarize" });
+    if (msg?.type === "open-comparison")
+      run({ type: "compare", otherUrl: msg.otherUrl });
   });
 })();

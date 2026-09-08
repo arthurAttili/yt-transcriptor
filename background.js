@@ -1,6 +1,7 @@
-// Clique no ícone → injeta o coletor na página ativa e copia a transcrição.
-// Mensagem "summarize" do content script → coleta a transcrição, chama o
-// Gemini e devolve o resumo para o painel na página.
+// Popup do ícone → copia a transcrição na abertura e oferece resumo,
+// comparação entre dois vídeos e edição da instrução do resumo.
+// Mensagens do content script / popup → coleta transcrições, chama o Gemini
+// e devolve o texto para o painel na página.
 // O coletor roda no MAIN world para ter acesso ao player do YouTube
 // (movie_player / ytInitialPlayerResponse), invisível em worlds isolados.
 
@@ -10,8 +11,9 @@ const GEMINI_URL =
   GEMINI_MODEL +
   ":generateContent";
 
-// Instrução do resumo (otimizada a partir da instrução original do Arthur).
-const SUMMARY_SYSTEM_PROMPT = `Você é um assistente de resumos de vídeos do YouTube. Você receberá o título e a transcrição (com timestamps) de um vídeo e deve produzir um resumo crítico em português do Brasil, exatamente neste formato Markdown:
+// Instrução padrão do resumo (otimizada a partir da instrução original do
+// Arthur). O usuário pode substituí-la pelo popup; fica em storage.local.
+const DEFAULT_SUMMARY_PROMPT = `Você é um assistente de resumos de vídeos do YouTube. Você receberá o título e a transcrição (com timestamps) de um vídeo e deve produzir um resumo crítico em português do Brasil, exatamente neste formato Markdown:
 
 # {título do vídeo}
 
@@ -40,27 +42,52 @@ Regras:
 - Seja específico na análise crítica: aponte trechos e argumentos concretos, não generalidades.
 - Transcrições automáticas contêm erros de reconhecimento de voz; interprete com bom senso.`;
 
-chrome.action.onClicked.addListener(async (tab) => {
-  if (!tab.id) return;
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: "MAIN",
-      func: runTranscript,
-      args: [isWatchUrl(tab.url), "copy"],
-    });
-  } catch (e) {
-    // Página onde não dá para injetar (chrome://, Web Store etc.)
-    await chrome.action.setBadgeBackgroundColor({ color: "#c0392b", tabId: tab.id });
-    await chrome.action.setBadgeText({ text: "✕", tabId: tab.id });
-    setTimeout(() => chrome.action.setBadgeText({ text: "", tabId: tab.id }), 2500);
-  }
-});
+// Acrescentada à instrução do usuário quando dois vídeos são analisados juntos.
+const COMPARE_ADDENDUM = `
+
+--- ANÁLISE CONJUNTA DE DOIS VÍDEOS ---
+Desta vez você recebe as transcrições de DOIS vídeos e deve analisá-los em conjunto. Ignore o formato de vídeo único descrito acima e use este:
+
+# {título do vídeo 1} × {título do vídeo 2}
+
+## O que cada um defende
+Um parágrafo por vídeo, com a tese central de cada um.
+
+## Onde concordam
+- Pontos em que os dois chegam à mesma conclusão, ainda que por caminhos diferentes.
+
+## Onde divergem
+- Divergências reais de tese, dado ou método. Diga qual vídeo sustenta melhor cada ponto e por quê.
+
+## O que um tem e o outro não
+- Argumentos, dados ou recortes exclusivos de cada lado.
+
+## Análise crítica
+Sua avaliação dos dois: qual é mais bem fundamentado, onde cada um falha, que vieses aparecem.
+
+## Perguntas para reflexão
+- 2 ou 3 perguntas que surgem do confronto entre os dois vídeos.
+
+Mantenha o tom e as regras da instrução acima. Identifique os vídeos pelo título, nunca por "vídeo 1" e "vídeo 2" no corpo do texto.`;
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type === "summarize" && sender.tab?.id) {
-    summarize(sender.tab).then(sendResponse);
+  const tabId = msg?.tabId || sender.tab?.id;
+
+  if (msg?.type === "summarize" && tabId) {
+    summarize(tabId).then(sendResponse);
     return true; // resposta assíncrona
+  }
+  if (msg?.type === "compare" && tabId) {
+    compare(tabId, msg.otherUrl).then(sendResponse);
+    return true;
+  }
+  if (msg?.type === "copy-transcript" && tabId) {
+    copyTranscript(tabId).then(sendResponse);
+    return true;
+  }
+  if (msg?.type === "get-default-prompt") {
+    sendResponse({ prompt: DEFAULT_SUMMARY_PROMPT });
+    return;
   }
   if (msg?.type === "open-options") {
     chrome.runtime.openOptionsPage();
@@ -74,51 +101,161 @@ function isWatchUrl(url) {
   );
 }
 
-async function summarize(tab) {
+async function getSummaryPrompt() {
+  const { summaryPrompt } = await chrome.storage.local.get("summaryPrompt");
+  return summaryPrompt?.trim() ? summaryPrompt : DEFAULT_SUMMARY_PROMPT;
+}
+
+// Roda o coletor numa aba e devolve { ok, title, text } ou { ok:false, reason }.
+async function collectFrom(tabId, url) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: runTranscript,
+    args: [isWatchUrl(url), "collect"],
+  });
+  return result;
+}
+
+// Devolve o texto pronto para o popup copiar. A gravação na área de
+// transferência acontece no popup: com ele aberto a página perde o foco, e
+// tanto a Clipboard API quanto execCommand exigem documento focado.
+async function copyTranscript(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const result = await collectFrom(tabId, tab.url);
+    if (result?.ok) {
+      return {
+        ok: true,
+        text: (result.title ? result.title + "\n\n" : "") + result.text,
+      };
+    }
+    return { ok: false, reason: result?.reason || "error" };
+  } catch (e) {
+    return { ok: false, reason: "inject" };
+  }
+}
+
+async function summarize(tabId) {
   const { geminiApiKey } = await chrome.storage.local.get("geminiApiKey");
   if (!geminiApiKey) return { error: "no-key" };
 
   let collected;
   try {
-    const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: "MAIN",
-      func: runTranscript,
-      args: [isWatchUrl(tab.url), "collect"],
-    });
-    collected = result;
+    const tab = await chrome.tabs.get(tabId);
+    collected = await collectFrom(tabId, tab.url);
   } catch (e) {
     return { error: "inject", detail: String(e) };
   }
-
   if (!collected?.ok) return { error: collected?.reason || "transcript" };
 
+  const prompt = await getSummaryPrompt();
+  const user =
+    "Título do vídeo: " +
+    collected.title +
+    "\n\nTranscrição:\n" +
+    collected.text.slice(0, 800000);
+
+  const out = await callGemini(geminiApiKey, prompt, user);
+  return out.error ? out : { summary: out.text, title: collected.title };
+}
+
+async function compare(tabId, otherUrl) {
+  const { geminiApiKey } = await chrome.storage.local.get("geminiApiKey");
+  if (!geminiApiKey) return { error: "no-key" };
+  if (!isWatchUrl(otherUrl)) return { error: "bad-url" };
+
+  let current;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    current = await collectFrom(tabId, tab.url);
+  } catch (e) {
+    return { error: "inject", detail: String(e) };
+  }
+  if (!current?.ok) return { error: current?.reason || "transcript" };
+
+  const other = await collectFromUrl(otherUrl);
+  if (!other?.ok) return { error: "other-" + (other?.reason || "transcript") };
+
+  const prompt = (await getSummaryPrompt()) + COMPARE_ADDENDUM;
+  const user =
+    "VÍDEO 1 — " +
+    current.title +
+    "\nTranscrição:\n" +
+    current.text.slice(0, 400000) +
+    "\n\n=====\n\nVÍDEO 2 — " +
+    other.title +
+    "\nTranscrição:\n" +
+    other.text.slice(0, 400000);
+
+  const out = await callGemini(geminiApiKey, prompt, user);
+  return out.error
+    ? out
+    : { summary: out.text, title: current.title + " × " + other.title };
+}
+
+// A transcrição só sai com o player carregado (o endpoint exige o token pot),
+// então o segundo vídeo abre numa aba em segundo plano, fechada no fim.
+async function collectFromUrl(url) {
+  let tab = null;
+  try {
+    tab = await chrome.tabs.create({ url, active: false });
+    await waitForTabLoad(tab.id, 30000);
+    // Duas tentativas: em aba de segundo plano o player demora mais a
+    // registrar as faixas de legenda.
+    let result = null;
+    for (const wait of [1500, 3000]) {
+      await sleep(wait);
+      result = await collectFrom(tab.id, url);
+      if (result?.ok) break;
+    }
+    return result;
+  } catch (e) {
+    return { ok: false, reason: "fetch-failed" };
+  } finally {
+    if (tab?.id) chrome.tabs.remove(tab.id).catch(() => {});
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function waitForTabLoad(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    };
+    const listener = (id, info) => {
+      if (id === tabId && info.status === "complete") finish();
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs
+      .get(tabId)
+      .then((t) => {
+        if (t.status === "complete") finish();
+      })
+      .catch(finish);
+    setTimeout(finish, timeoutMs);
+  });
+}
+
+async function callGemini(apiKey, systemPrompt, userText) {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 180000);
+    const timer = setTimeout(() => controller.abort(), 300000);
     const res = await fetch(GEMINI_URL, {
       method: "POST",
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
-        "x-goog-api-key": geminiApiKey,
+        "x-goog-api-key": apiKey,
       },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SUMMARY_SYSTEM_PROMPT }] },
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text:
-                  "Título do vídeo: " +
-                  collected.title +
-                  "\n\nTranscrição:\n" +
-                  collected.text.slice(0, 800000),
-              },
-            ],
-          },
-        ],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: "user", parts: [{ text: userText }] }],
         generationConfig: { temperature: 0.4 },
       }),
     });
@@ -145,11 +282,11 @@ async function summarize(tab) {
         "resposta vazia";
       return { error: "api", detail: String(reason) };
     }
-    return { summary: text, title: collected.title };
+    return { text };
   } catch (e) {
     return {
       error: "api",
-      detail: e?.name === "AbortError" ? "tempo esgotado (180s)" : String(e),
+      detail: e?.name === "AbortError" ? "tempo esgotado (300s)" : String(e),
     };
   }
 }
