@@ -1,7 +1,6 @@
-// Popup do ícone. Ao abrir já copia a transcrição do vídeo em foco — a
-// gravação acontece aqui porque o documento focado é o popup, não a página.
-// Também expõe o resumo, a comparação entre dois vídeos e a instrução usada
-// pelo Gemini.
+// Popup do ícone: copiar transcrição, resumir, comparar com outro vídeo e
+// editar a instrução usada pelo Gemini. A cópia é gravada aqui porque com o
+// popup aberto o documento focado é ele, e não a página.
 
 const $ = (id) => document.getElementById(id);
 
@@ -19,6 +18,7 @@ function setCopyStatus(text, kind) {
   const el = $("copy-status");
   el.textContent = text;
   el.className = kind || "";
+  el.hidden = !text;
 }
 
 function setMsg(id, text, kind) {
@@ -38,16 +38,17 @@ async function init() {
 
   if (!isYouTubeVideo(tab?.url)) {
     setCopyStatus("Abra um vídeo do YouTube para usar a extensão.", "err");
-    $("summarize").disabled = true;
-    $("compare-toggle").disabled = true;
-  } else {
-    copyTranscript();
+    for (const id of ["copy", "summarize", "compare-toggle"]) {
+      $(id).disabled = true;
+    }
   }
 
   loadPrompt();
 }
 
 async function copyTranscript() {
+  setCopyStatus("Copiando a transcrição…");
+  $("copy").disabled = true;
   try {
     const resp = await chrome.runtime.sendMessage({
       type: "copy-transcript",
@@ -64,6 +65,8 @@ async function copyTranscript() {
     setCopyStatus("Transcrição copiada!", "ok");
   } catch (e) {
     setCopyStatus("Não consegui acessar a área de transferência.", "err");
+  } finally {
+    $("copy").disabled = false;
   }
 }
 
@@ -87,6 +90,7 @@ function order(message) {
     .finally(() => window.close());
 }
 
+$("copy").addEventListener("click", copyTranscript);
 $("summarize").addEventListener("click", () => order({ type: "open-summary" }));
 
 $("compare-toggle").addEventListener("click", () => {

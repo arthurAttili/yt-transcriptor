@@ -1,10 +1,12 @@
 # YT Transcriptor
 
-Extensão de Chrome que copia a transcrição de qualquer vídeo do YouTube com um clique no ícone. Também gera resumo crítico do vídeo pelo Gemini. E compara dois vídeos entre si.
+Extensão de Chrome que copia a transcrição de qualquer vídeo do YouTube. Também gera resumo crítico do vídeo pelo Gemini. E compara dois vídeos entre si.
 
 ## Como funciona
 
-Ao clicar no ícone da extensão, um script é injetado na página do vídeo, lê as faixas de legenda direto do player (preferindo legenda manual à automática), baixa a faixa em JSON e copia o texto com timestamps para a área de transferência. O popup que abre junto confirma a cópia e dá acesso ao resumo, à comparação e às instruções. Nada sai do navegador — sem servidor, sem conta, sem rastreamento.
+Em **Copiar transcrição**, um script é injetado na página do vídeo, lê as faixas de legenda direto do player (preferindo legenda manual à automática), baixa a faixa em JSON e copia o texto com timestamps para a área de transferência. Nada sai do navegador: sem servidor, sem conta, sem rastreamento.
+
+A ação está em dois lugares. O ícone da extensão abre um popup com **Copiar transcrição**, **Resumir este vídeo** e **Comparar com outro vídeo**, mais as instruções e a chave da API. O botão **.txt**, dentro do YouTube, abre um menu curto com **Copiar transcrição** e **Resumir vídeo**.
 
 O YouTube passou a exigir um token de origem (`pot`) no endpoint de legendas — sem ele, a resposta vem com corpo vazio. Quando isso acontece, a extensão reaproveita a URL assinada que o próprio player já gerou nesta sessão, ou força o player a gerá-la ligando e desligando as legendas por um instante (o estado do usuário é restaurado em seguida).
 
@@ -19,7 +21,7 @@ Título do vídeo
 
 ## Resumo com Gemini
 
-O botão **.txt** entra na interface nativa do YouTube em dois lugares: na barra de ações do vídeo (junto de like/compartilhar) e nos controles do player (junto de legendas/engrenagem — disponível também em tela cheia). Um clique coleta a transcrição, envia ao modelo `gemini-3.7-flash` e abre um painel lateral com:
+O botão **.txt** entra na interface nativa do YouTube em dois lugares: na barra de ações do vídeo (junto de like/compartilhar) e nos controles do player (junto de legendas/engrenagem, disponível também em tela cheia). **Resumir vídeo** coleta a transcrição, envia ao modelo `gemini-3.7-flash` e abre um painel lateral com:
 
 - **Resumo** — síntese fiel do conteúdo
 - **Pontos principais** — bullets com timestamps
@@ -52,7 +54,7 @@ A transcrição só sai com o player carregado, então o segundo vídeo é abert
 
 - `manifest.json` — Manifest V3 (`activeTab`, `scripting`, `storage` + hosts do YouTube e da API do Gemini)
 - `background.js` — service worker: injeta o coletor de transcrição, abre a aba do segundo vídeo na comparação e chama a API do Gemini
-- `content.js` — botões ".txt" integrados à interface do YouTube e painel lateral
-- `popup.html` / `popup.js` — popup do ícone: cópia da transcrição, resumo, comparação e instruções do Gemini
+- `content.js` — botões ".txt" integrados à interface do YouTube, menu de ações e painel lateral
+- `popup.html` / `popup.js` — popup do ícone: transcrição, resumo, comparação e instruções do Gemini
 - `options.html` / `options.js` — cadastro e validação da chave da API do Gemini
 - `icons/` — ícones da extensão

@@ -1,12 +1,14 @@
 // Botões ".txt" integrados à interface nativa do YouTube: um na barra de
 // ações do vídeo (junto de like/compartilhar) e um nos controles do player
-// (junto de legendas/engrenagem — visível também em tela cheia). O resultado
-// do Gemini abre num painel lateral. Roda no world isolado (chrome.runtime).
+// (junto de legendas/engrenagem — visível também em tela cheia). Cada um abre
+// um menu curto: copiar a transcrição ou resumir. O resumo sai num painel
+// lateral. Roda no world isolado, por causa do chrome.runtime.
 
 (() => {
   const ACTION_BTN_ID = "ytt-action-btn";
   const PLAYER_BTN_ID = "ytt-player-btn";
   const PANEL_ID = "ytt-panel";
+  const MENU_ID = "ytt-menu";
   let busy = false;
 
   const isWatchPage = () =>
@@ -117,6 +119,25 @@
         width: auto; min-width: 36px; padding: 0 8px; vertical-align: top;
         color: #fff; font: 500 13px/1 "Roboto", Arial, sans-serif;
       }
+      #${MENU_ID} {
+        position: fixed; z-index: 2147483647; min-width: 190px; padding: 6px;
+        background: #212121; border: 1px solid #3d3d3d; border-radius: 10px;
+        box-shadow: 0 8px 24px rgba(0,0,0,.55);
+        animation: ytt-fadein .18s ease both;
+      }
+      #${MENU_ID} button {
+        display: block; width: 100%; text-align: left; border: none;
+        background: none; color: #eee; padding: 9px 12px; border-radius: 6px;
+        font: 400 13px/1.4 Roboto, Arial, sans-serif; cursor: pointer;
+      }
+      #${MENU_ID} button:hover { background: #383838; }
+      #${MENU_ID} button:disabled { color: #888; cursor: wait; }
+      #${MENU_ID} .ytt-menu-msg {
+        padding: 4px 12px 6px; font: 400 11.5px/1.4 Roboto, Arial, sans-serif;
+        color: #9aa0a6;
+      }
+      #${MENU_ID} .ytt-menu-msg.ok { color: #6fcf7c; }
+      #${MENU_ID} .ytt-menu-msg.err { color: #ff8a80; }
       #${PANEL_ID} {
         position: fixed; top: 0; right: 0; bottom: 0; z-index: 2147483646;
         width: min(440px, 92vw); display: flex; flex-direction: column;
@@ -235,12 +256,128 @@
     }
   }
 
-  const summarize = () => run({ type: "summarize" });
+  // ---------- menu dos botões ----------
+  function closeMenu() {
+    document.getElementById(MENU_ID)?.remove();
+    document.removeEventListener("pointerdown", onOutside, true);
+    document.removeEventListener("keydown", onEsc, true);
+    window.removeEventListener("scroll", closeMenu, true);
+    window.removeEventListener("resize", closeMenu);
+  }
+
+  function onOutside(e) {
+    if (!e.target.closest(`#${MENU_ID}, #${ACTION_BTN_ID}, #${PLAYER_BTN_ID}`)) {
+      closeMenu();
+    }
+  }
+
+  function onEsc(e) {
+    if (e.key === "Escape") closeMenu();
+  }
+
+  function toggleMenu(anchor) {
+    const open = document.getElementById(MENU_ID);
+    closeMenu();
+    if (open) return;
+    injectStyles();
+
+    const menu = document.createElement("div");
+    menu.id = MENU_ID;
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.textContent = "Copiar transcrição";
+    const sumBtn = document.createElement("button");
+    sumBtn.type = "button";
+    sumBtn.textContent = "Resumir vídeo";
+    const msg = document.createElement("div");
+    msg.className = "ytt-menu-msg";
+    msg.hidden = true;
+    menu.append(copyBtn, sumBtn, msg);
+
+    copyBtn.addEventListener("click", () => copyFromMenu(copyBtn, msg));
+    sumBtn.addEventListener("click", () => {
+      closeMenu();
+      run({ type: "summarize" });
+    });
+
+    // Em tela cheia o menu precisa ser filho do elemento em fullscreen.
+    (document.fullscreenElement || document.documentElement).appendChild(menu);
+
+    const r = anchor.getBoundingClientRect();
+    const w = menu.offsetWidth;
+    const h = menu.offsetHeight;
+    let top = r.bottom + 6;
+    if (top + h > window.innerHeight - 8) top = r.top - h - 6;
+    const left = Math.min(r.left, window.innerWidth - w - 8);
+    menu.style.left = Math.max(8, left) + "px";
+    menu.style.top = Math.max(8, top) + "px";
+
+    document.addEventListener("pointerdown", onOutside, true);
+    document.addEventListener("keydown", onEsc, true);
+    window.addEventListener("scroll", closeMenu, true);
+    window.addEventListener("resize", closeMenu);
+  }
+
+  const COPY_ERRORS = {
+    "not-watch": "Abra um vídeo do YouTube.",
+    "no-transcript": "Este vídeo não tem transcrição disponível.",
+    "fetch-failed": "Erro ao obter a transcrição deste vídeo.",
+    inject: "Recarregue a página e tente de novo.",
+  };
+
+  function setMenuMsg(msg, text, kind) {
+    msg.textContent = text;
+    msg.className = "ytt-menu-msg" + (kind ? " " + kind : "");
+    msg.hidden = false;
+  }
+
+  async function copyFromMenu(btn, msg) {
+    btn.disabled = true;
+    setMenuMsg(msg, "Lendo a transcrição…");
+    try {
+      const resp = await chrome.runtime.sendMessage({ type: "copy-transcript" });
+      if (!resp?.ok) {
+        setMenuMsg(
+          msg,
+          COPY_ERRORS[resp?.reason] || "Erro ao copiar a transcrição.",
+          "err"
+        );
+        return;
+      }
+      await writeClipboard(resp.text);
+      setMenuMsg(msg, "Transcrição copiada!", "ok");
+      setTimeout(closeMenu, 1200);
+    } catch (e) {
+      setMenuMsg(msg, "Erro ao copiar a transcrição.", "err");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // Sem permissão da Clipboard API, o textarea invisível cobre o caso.
+  async function writeClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (e) {}
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    if (!ok) throw new Error("clipboard");
+  }
+
+
 
   async function run(request) {
     if (busy) return;
     busy = true;
     setButtonsDisabled(true);
+    closeMenu();
     const panel = openPanel();
     if (request.type === "compare") {
       showStatus(
@@ -314,9 +451,9 @@
     const btn = document.createElement("button");
     btn.id = ACTION_BTN_ID;
     btn.type = "button";
-    btn.title = "Resumir vídeo com Gemini";
+    btn.title = "Transcrição e resumo do vídeo";
     btn.textContent = ".txt";
-    btn.addEventListener("click", summarize);
+    btn.addEventListener("click", () => toggleMenu(btn));
     container.appendChild(btn);
     return true;
   }
@@ -333,9 +470,9 @@
     btn.id = PLAYER_BTN_ID;
     btn.className = "ytp-button";
     btn.type = "button";
-    btn.title = "Resumir vídeo com Gemini";
+    btn.title = "Transcrição e resumo do vídeo";
     btn.textContent = ".txt";
-    btn.addEventListener("click", summarize);
+    btn.addEventListener("click", () => toggleMenu(btn));
     controls.insertBefore(btn, controls.firstChild);
     return true;
   }
@@ -349,6 +486,7 @@
     if (!isWatchPage()) {
       document.getElementById(ACTION_BTN_ID)?.remove();
       document.getElementById(PLAYER_BTN_ID)?.remove();
+      closeMenu();
       closePanel();
       return;
     }
